@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>板块竞价实时监控 - 东方财富数据</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶部导航 -->
+        <header class="header">
+            <div class="header-left">
+                <h1>📊 板块竞价监控</h1>
+                <span class="subtitle">东方财富实时数据</span>
+                <span class="last-update" id="lastUpdate"></span>
+            </div>
+            <div class="header-right">
+                <div class="trading-status" id="tradingStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">加载中</span>
+                </div>
+                <div class="clock" id="clock">--:--:--</div>
+                <button class="btn-refresh" id="btnRefresh" title="立即刷新">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8h1.5a6.5 6.5 0 0 1 11.34-4.34L10 6h6V0l-2.35 2.35zM6 10H0v6l2.35-2.35A7.96 7.96 0 0 0 8 16c4.42 0 8-3.58 8-8h-1.5a6.5 6.5 0 0 1-11.34 4.34L6 10z"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- 竞价采集栏 -->
+        <div class="auction-bar" id="auctionBar">
+            <div class="auction-bar-left">
+                <button class="btn-capture" id="btnCapture">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM7 4v4l3.5 2.1.75-1.3L8 7V4H7z"/>
+                    </svg>
+                    实时采集竞价数据
+                </button>
+                <span class="capture-hint">⏰ 需在 9:15~9:30 竞价时段采集</span>
+                <span class="capture-status" id="captureStatus"></span>
+            </div>
+            <div class="auction-bar-right">
+                <span class="auction-info" id="auctionInfo"></span>
+                <button class="btn-history" id="btnHistory" title="查看采集历史">📋 历史记录</button>
+            </div>
+        </div>
+
+        <!-- 控制栏 -->
+        <div class="control-bar">
+            <div class="control-left">
+                <div class="tab-group">
+                    <button class="tab active" data-type="industry">🏭 行业板块</button>
+                    <button class="tab" data-type="concept">💡 概念板块</button>
+                </div>
+                <div class="date-picker-group">
+                    <label class="date-label" for="queryDate">📅 日期</label>
+                    <input type="date" id="queryDate" class="date-input">
+                    <button class="btn-query-date" id="btnQueryDate" title="查询指定日期数据">查询</button>
+                    <button class="btn-today" id="btnToday" title="回到今天实时数据">今天</button>
+                </div>
+            </div>
+            <div class="control-right">
+                <div class="search-box">
+                    <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M11 11L15 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <input type="text" id="searchInput" placeholder="搜索板块名称或代码...">
+                </div>
+                <select id="sortSelect">
+                    <option value="f3_desc">涨幅 ↓</option>
+                    <option value="f3_asc">涨幅 ↑</option>
+                    <option value="f62_desc">主力净流入 ↓</option>
+                    <option value="f6_desc">成交额 ↓</option>
+                    <option value="auctionAmount_desc" selected>今日竞价额 ↓</option>
+                    <option value="auctionAmount_asc">今日竞价额 ↑</option>
+                    <option value="f8_desc">换手率 ↓</option>
+                    <option value="f2_desc">最新价 ↓</option>
+                </select>
+                <label class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh" checked>
+                    自动刷新
+                </label>
+                <select id="refreshInterval">
+                    <option value="3000">3秒</option>
+                    <option value="5000" selected>5秒</option>
+                    <option value="10000">10秒</option>
+                    <option value="30000">30秒</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 统计概览 -->
+        <div class="stats-bar" id="statsBar">
+            <div class="stat-item">
+                <span class="stat-label">板块总数</span>
+                <span class="stat-value" id="totalCount">--</span>
+            </div>
+            <div class="stat-item" id="stockCountItem">
+                <span class="stat-label">A股总数</span>
+                <span class="stat-value" id="totalStocks">--</span>
+            </div>
+            <div class="stat-item up">
+                <span class="stat-label">🔴 上涨</span>
+                <span class="stat-value" id="upCount">--</span>
+            </div>
+            <div class="stat-item down">
+                <span class="stat-label">🟢 下跌</span>
+                <span class="stat-value" id="downCount">--</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">平均涨跌幅</span>
+                <span class="stat-value" id="avgChange">--</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">主力净流入</span>
+                <span class="stat-value" id="totalInflow">--</span>
+            </div>
+            <div class="stat-item auction-highlight">
+                <span class="stat-label">📊 竞价额增减</span>
+                <span class="stat-value" id="auctionTotalChange">--</span>
+            </div>
+        </div>
+
+        <!-- 日期查询提示 -->
+        <div class="date-query-banner" id="dateQueryBanner" style="display:none;">
+            <span id="dateQueryText">正在查看历史数据</span>
+            <button class="btn-back-today" onclick="backToToday()">返回今天</button>
+        </div>
+
+        <!-- 加载中 -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <span>正在从东方财富加载数据...</span>
+        </div>
+
+        <!-- 错误提示 -->
+        <div class="error-toast" id="errorToast"></div>
+
+        <!-- 数据表格 - 单表结构，sticky 固定表头 -->
+        <div class="table-wrapper" id="tableContainer" style="display:none;">
+            <table class="data-table" id="dataTable">
+                <colgroup>
+                    <col style="width:46px"><col style="width:110px">
+                    <col style="width:72px"><col style="width:88px"><col style="width:88px"><col style="width:88px">
+                    <col style="width:72px"><col style="width:108px"><col style="width:72px">
+                    <col style="width:96px"><col style="width:78px">
+                    <col style="width:96px"><col style="width:88px"><col style="width:88px"><col style="width:88px">
+                    <col style="width:78px"><col style="width:88px"><col style="width:68px">
+                    <col style="width:78px"><col style="width:72px">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="index">#</th>
+                        <th class="sortable" data-sort="f14" style="text-align:left">板块名称</th>
+                        <th class="sortable constituent-col" data-sort="constituentCount">成分股</th>
+                        <th class="sortable auction-col sort-desc" data-sort="auctionAmount">今日竞价额</th>
+                        <th class="sortable auction-col" data-sort="auctionAmountPrev">昨日竞价额</th>
+                        <th class="sortable auction-col" data-sort="auctionChange">竞价额变化</th>
+                        <th class="sortable auction-col" data-sort="auctionChangeRate">竞价变化率</th>
+                        <th class="sortable" data-sort="f2">最新价</th>
+                        <th class="sortable" data-sort="f3">涨跌幅</th>
+                        <th class="sortable" data-sort="f4">涨跌额</th>
+                        <th class="sortable" data-sort="f62">主力净流入</th>
+                        <th class="sortable" data-sort="f184">主力净占比</th>
+                        <th class="sortable" data-sort="f66">超大单净额</th>
+                        <th class="sortable" data-sort="f72">大单净额</th>
+                        <th class="sortable" data-sort="f78">中单净额</th>
+                        <th class="sortable" data-sort="f84">小单净额</th>
+                        <th class="sortable" data-sort="f5">总手</th>
+                        <th class="sortable" data-sort="f6">成交额</th>
+                        <th class="sortable" data-sort="f8">换手率</th>
+                        <th>领涨股</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="pagination" id="pagination"></div>
+
+        <!-- 板块详情弹窗 -->
+        <div class="modal-overlay" id="modalOverlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2 id="modalTitle">板块详情</h2>
+                    <button class="modal-close" id="modalClose">&times;</button>
+                </div>
+                <div class="modal-body" id="modalBody"></div>
+            </div>
+        </div>
+
+        <!-- 竞价历史弹窗 -->
+        <div class="modal-overlay" id="historyOverlay">
+            <div class="modal modal-lg">
+                <div class="modal-header">
+                    <h2>📋 竞价数据采集历史</h2>
+                    <button class="modal-close" id="historyClose">&times;</button>
+                </div>
+                <div class="modal-body" id="historyBody"></div>
+            </div>
+        </div>
+
+        <!-- 成分股列表弹窗 -->
+        <div class="modal-overlay" id="constituentsOverlay">
+            <div class="modal modal-xl">
+                <div class="modal-header">
+                    <div class="modal-title-group">
+                        <h2 id="constituentsTitle">成分股列表</h2>
+                        <span class="constituents-count-badge" id="constituentsTotalBadge"></span>
+                    </div>
+                    <button class="modal-close" id="constituentsClose">&times;</button>
+                </div>
+                <div class="modal-body" id="constituentsBody">
+                    <div class="constituents-loading" id="constituentsLoading">
+                        <div class="spinner"></div>
+                        <span>加载成分股数据...</span>
+                    </div>
+                    <div id="constituentsContent" style="display:none">
+                        <table class="constituents-table" id="constituentsTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:40px">#</th>
+                                    <th style="width:100px;text-align:left">股票名称</th>
+                                    <th style="width:80px">股票代码</th>
+                                    <th style="width:90px">竞价成交额</th>
+                                    <th style="width:80px">昨日收盘价</th>
+                                    <th style="width:80px">最新价</th>
+                                    <th style="width:90px">涨跌幅</th>
+                                </tr>
+                            </thead>
+                            <tbody id="constituentsTableBody"></tbody>
+                        </table>
+                        <div class="constituents-pagination" id="constituentsPagination"></div>
+                    </div>
+                    <div class="constituents-error" id="constituentsError" style="display:none"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
