@@ -25,6 +25,16 @@ SECTOR_TYPES = {
 SECTOR_FIELDS = "f2,f3,f4,f5,f6,f8,f12,f14,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f104,f105,f106,f128,f136"
 
 
+def _to_float(val, default=0.0):
+    """安全转换为浮点数（东方财富 API 可能返回 int/float/str/None）"""
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def fetch_sector_snapshot(sector_type):
     """抓取单个板块类型的所有数据（分页遍历，API每页最多100条）"""
     cfg = SECTOR_TYPES[sector_type]
@@ -164,7 +174,7 @@ def build_comparison(current_data, prev_data):
                 if code:
                     key = (sector_type, code)
                     prev_map[key] = {
-                        "amount": sector.get("f6", 0) or 0,
+                        "amount": _to_float(sector.get("f6")),
                         "name": sector.get("f14", ""),
                     }
 
@@ -175,7 +185,7 @@ def build_comparison(current_data, prev_data):
         for sector in type_data.get("sectors", []):
             code = sector.get("f12", "")
             name = sector.get("f14", "")
-            cur_amount = sector.get("f6", 0) or 0
+            cur_amount = _to_float(sector.get("f6"))
 
             key = (sector_type, code)
             prev_info = prev_map.get(key)
@@ -262,12 +272,12 @@ if __name__ == "__main__":
                 cur_amounts = {}
                 for type_data in saved["data"].values():
                     for s in type_data.get("sectors", []):
-                        cur_amounts[s.get("f12", "")] = s.get("f6", 0) or 0
+                        cur_amounts[s.get("f12", "")] = _to_float(s.get("f6"))
 
                 prev_amounts = {}
                 for type_data in prev_data["data"].values():
                     for s in type_data.get("sectors", []):
-                        prev_amounts[s.get("f12", "")] = s.get("f6", 0) or 0
+                        prev_amounts[s.get("f12", "")] = _to_float(s.get("f6"))
 
                 # 计算总计变化
                 cur_total = sum(cur_amounts.values())
