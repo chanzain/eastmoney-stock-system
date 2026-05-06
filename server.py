@@ -152,6 +152,71 @@ def api_snapshot_latest():
     })
 
 
+@app.route("/api/today-auction")
+def api_today_auction():
+    """
+    获取今日竞价快照数据（供前端在非竞价时段展示竞价额）
+    只返回竞价时段采集的快照，非竞价时段采集的跳过
+    参数：
+      type - 板块类型：industry 或 concept
+    返回：{ code: amount } 的映射（amount 为竞价额）
+    """
+    sector_type = request.args.get("type", "industry").strip()
+    today_str = datetime.now().strftime("%Y%m%d")
+
+    # 1. 优先找竞价时段的快照
+    auction_file = _find_latest_auction_snapshot(today_str)
+    if auction_file:
+        try:
+            with open(auction_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            amount_map = {}
+            type_data = data.get("data", {}).get(sector_type, {})
+            for sector in type_data.get("sectors", []):
+                code = sector.get("f12", "")
+                amount = sector.get("f6")
+                if code and amount is not None:
+                    amount_map[code] = float(amount)
+
+            return jsonify({
+                "success": True,
+                "source": "auction_snapshot",
+                "date": today_str,
+                "capture_time": data.get("capture_time", ""),
+                "is_auction_data": True,
+                "type": sector_type,
+                "count": len(amount_map),
+                "amounts": amount_map,
+            })
+        except Exception as e:
+            print(f"[WARN] 读取今日竞价快照失败: {e}")
+
+    # 2. 当前在竞价时段，返回提示让前端用实时数据
+    now = datetime.now()
+    h, m = now.hour, now.minute
+    t = h * 100 + m
+    if 915 <= t <= 930:
+        return jsonify({
+            "success": True,
+            "source": "realtime",
+            "date": today_str,
+            "is_auction_data": True,
+            "type": sector_type,
+            "count": 0,
+            "amounts": {},
+            "message": "当前为竞价时段，请使用实时f6数据",
+        })
+
+    # 3. 无竞价快照且非竞价时段
+    return jsonify({
+        "success": False,
+        "message": "今日尚无竞价时段快照数据（服务需在9:25前启动以自动采集）",
+        "date": today_str,
+        "type": sector_type,
+    })
+
+
 @app.route("/api/snapshot")
 def api_snapshot():
     """获取指定日期的快照数据"""
@@ -270,28 +335,26 @@ def api_constituents():
 @app.route("/api/yesterday-compare")
 def api_yesterday_compare():
     """
-    获取昨日板块成交额数据，供前端做今日vs昨日对比
+    获取昨日板块【竞价额】数据，供前端做今日vs昨日对比
+    只返回竞价时段（9:15~9:25）采集的快照数据，非竞价时段采集的不用
     参数：
       type - 板块类型：industry 或 concept
-    逻辑：
-      1. 优先从本地快照获取昨日数据
-      2. 无快照则通过 K线 API 获取昨日板块数据
-    返回：{ code: amount } 的映射
+    返回：{ code: amount } 的映射（amount 为竞价额）
     """
     sector_type = request.args.get("type", "industry").strip()
 
-    # 1. 尝试从本地竞价快照获取昨日数据
+    # 1. 尝试从本地【竞价时段】快照获取昨日数据
     today_str = datetime.now().strftime("%Y%m%d")
     prev_date = _find_previous_date(today_str)
 
     if prev_date:
-        prev_file = _find_latest_snapshot(prev_date)
+        prev_file = _find_latest_auction_snapshot(prev_date)
         if prev_file:
             try:
                 with open(prev_file, "r", encoding="utf-8") as f:
                     prev_data = json.load(f)
 
-                # 从快照中提取指定类型的板块成交额
+                # 从快照中提取指定类型的板块竞价额
                 amount_map = {}
                 type_data = prev_data.get("data", {}).get(sector_type, {})
                 for sector in type_data.get("sectors", []):
@@ -302,8 +365,38 @@ def api_yesterday_compare():
 
                 return jsonify({
                     "success": True,
+                    "source": "auction_snapshot",
+                    "date": prev_date,
+                    "is_auction_data": True,
+                    "type": sector_type,
+                    "count": len(amount_map),
+                    "amounts": amount_map,
+                })
+            except Exception as e:
+                print(f"[WARN] 读取昨日竞价快照失败: {e}")
+
+    # 2. 无竞价时段快照，尝试使用任意快照但标记为非竞价数据
+    if prev_date:
+        any_file = _find_latest_snapshot(prev_date)
+        if any_file:
+            try:
+                with open(any_file, "r", encoding="utf-8") as f:
+                    prev_data = json.load(f)
+
+                amount_map = {}
+                type_data = prev_data.get("data", {}).get(sector_type, {})
+                for sector in type_data.get("sectors", []):
+                    code = sector.get("f12", "")
+                    amount = sector.get("f6")
+                    if code and amount is not None:
+                        amount_map[code] = float(amount)
+
+                is_auction = prev_data.get("is_auction_data") is True
+                return jsonify({
+                    "success": True,
                     "source": "local_snapshot",
                     "date": prev_date,
+                    "is_auction_data": is_auction,
                     "type": sector_type,
                     "count": len(amount_map),
                     "amounts": amount_map,
@@ -759,10 +852,62 @@ def _find_latest_snapshot(date_str):
     return files[0] if files else None
 
 
+def _find_latest_auction_snapshot(date_str):
+    """查找指定日期最新的【竞价时段】快照文件（is_auction_data=true）"""
+    pattern = f"auction_{date_str}_*.json"
+    files = sorted(DATA_DIR.glob(pattern), reverse=True)
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if data.get("is_auction_data") is True:
+                return f
+        except Exception:
+            continue
+    return None
+
+
+# ── 自动采集调度 ────────────────────────────────────────────
+_auto_capture_last_date = ""  # 上次自动采集的日期，防止重复
+
+
+def _auto_capture_scheduler():
+    """后台线程：每个交易日 9:25 自动采集竞价快照"""
+    global _auto_capture_last_date
+    while True:
+        try:
+            now = datetime.now()
+            h, m = now.hour, now.minute
+            weekday = now.weekday()  # 0=Mon, 6=Sun
+            today_str = now.strftime("%Y%m%d")
+
+            # 工作日 9:25 触发（只触发一次）
+            if weekday < 5 and h == 9 and m == 25 and _auto_capture_last_date != today_str:
+                _auto_capture_last_date = today_str
+                print(f"[自动采集] {now.strftime('%Y-%m-%d %H:%M:%S')} 触发竞价数据采集...")
+                task_id = f"auto_{today_str}"
+                _fetch_results[task_id] = {"status": "running"}
+                run_fetch_in_background(task_id)
+                print(f"[自动采集] 采集任务已完成")
+
+            # 每天零点重置（允许第二天再采集）
+            if h == 0 and m == 0:
+                _auto_capture_last_date = ""
+
+        except Exception as e:
+            print(f"[自动采集] 调度异常: {e}")
+
+        time.sleep(30)  # 每30秒检查一次
+
+
 # ── 启动 ───────────────────────────────────────────────
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 启动自动采集调度线程
+    scheduler_thread = threading.Thread(target=_auto_capture_scheduler, daemon=True)
+    scheduler_thread.start()
 
     print(f"\n{'=' * 50}")
     print(f"  板块竞价监控系统 - 本地服务")
@@ -771,6 +916,7 @@ if __name__ == "__main__":
     print(f"  数据: GET  /api/snapshot/latest")
     print(f"  日期: GET  /api/dates")
     print(f"  历史: GET  /api/sector-history?date=YYYYMMDD&type=industry")
+    print(f"  自动采集: 每个交易日 9:25 自动保存竞价快照")
     print(f"{'=' * 50}\n")
 
     # 使用 waitress 替代 Flask 开发服务器（解决 Windows 上 urllib 在 Flask 中超时的问题）
