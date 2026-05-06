@@ -195,10 +195,12 @@ async function captureAuction() {
     const isWeekday = day >= 1 && day <= 5;
     const isAuctionTime = t >= 915 && t <= 930;
 
-    if (!isWeekday || !isAuctionTime) {
-        const msg = `⚠️ 当前时间（${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}）不在竞价时段（9:15~9:30），` +
-            `采集到的"竞价额"实际是全天成交额（包含连续竞价），数据会严重偏大！\n\n` +
-            `确认要继续采集吗？如需正确的竞价额数据，请在明天 9:15~9:30 之间采集。`;
+    if (!isWeekday) {
+        const msg = `⚠️ 当前是周末，采集到的数据可能不是交易日数据，确认要继续采集吗？`;
+        if (!confirm(msg)) return;
+    } else if (!isAuctionTime) {
+        const msg = `💡 当前时间（${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}）不在竞价时段（9:15~9:30），` +
+            `采集到的成交额为全天累计成交额。竞价时段采集则为竞价额。\n\n确认要继续采集吗？`;
         if (!confirm(msg)) return;
     }
 
@@ -270,11 +272,7 @@ async function loadAuctionData() {
                 state.prevAuctionData = todayData._prev_data;
             }
             updateAuctionInfo(todayData);
-
-            if (todayData.is_auction_data === false) {
-                showAuctionWarning();
-            }
-        }
+        }        }
 
         mergeAuctionData();
         return !!todayData.success;
@@ -292,9 +290,6 @@ function mergeAuctionData() {
     const currentSnapshot = state.auctionData.data[currentType];
     const prevSnapshot = state.prevAuctionData ? state.prevAuctionData.data[currentType] : null;
 
-    const curIsAuction = state.auctionData.is_auction_data !== false;
-    const prevIsAuction = state.prevAuctionData ? (state.prevAuctionData.is_auction_data !== false) : false;
-
     const prevMap = {};
     if (prevSnapshot && prevSnapshot.sectors) {
         prevSnapshot.sectors.forEach(s => {
@@ -305,12 +300,12 @@ function mergeAuctionData() {
     if (currentSnapshot && currentSnapshot.sectors) {
         state.data = currentSnapshot.sectors.map(s => {
             const prev = prevMap[s.f12];
-            const curAmount = curIsAuction ? (s.f6 || 0) : null;
-            const prevAmount = (prev && prevIsAuction) ? (prev.f6 || 0) : null;
+            const curAmount = parseFloat(s.f6) || 0;
+            const prevAmount = prev ? (parseFloat(prev.f6) || 0) : null;
 
             let change = null;
             let changeRate = null;
-            if (curAmount !== null && prevAmount !== null) {
+            if (prevAmount !== null) {
                 change = curAmount - prevAmount;
                 changeRate = prevAmount !== 0 ? (change / prevAmount) * 100 : 0;
             }
@@ -358,19 +353,15 @@ function updateAuctionInfo(data) {
     let text = `今日快照：${date} ${captureTime}`;
     let cls = '';
 
-    if (data.is_auction_data === false) {
-        text += ' ⚠️ 非竞价时段采集，竞价额数据不准确（实为全天成交额）';
-        cls = 'warning';
-    } else if (data.is_auction_data === true) {
+    if (data.is_auction_data === true) {
         text += ' ✅ 竞价时段数据';
         cls = 'success';
+    } else if (data.is_auction_data === false) {
+        text += ' 📊 全天成交额数据';
+        cls = '';
     }
     infoEl.textContent = text;
     infoEl.className = 'auction-info ' + cls;
-}
-
-function showAuctionWarning() {
-    showError('⚠️ 当前竞价数据非竞价时段采集，"今日竞价额"实际为全天成交额，数值严重偏大！请在 9:15~9:30 之间重新采集。');
 }
 
 // ========== 数据处理 ==========
@@ -460,14 +451,14 @@ function updateStats() {
     if (auctionChangeEl) {
         const totalCur = data.reduce((s, d) => s + (parseFloat(d._auctionAmount) || 0), 0);
         const totalPrev = data.reduce((s, d) => s + (parseFloat(d._prevAuctionAmount) || 0), 0);
-        const hasAuctionData = data.some(d => d._auctionAmount != null);
-        if (hasAuctionData && totalPrev > 0) {
+        const hasPrevData = data.some(d => d._prevAuctionAmount != null);
+        if (hasPrevData && totalPrev > 0) {
             const change = totalCur - totalPrev;
             const rate = (change / totalPrev * 100).toFixed(2);
             auctionChangeEl.textContent = (change >= 0 ? '+' : '') + (change / 100000000).toFixed(2) + '亿 (' + (change >= 0 ? '+' : '') + rate + '%)';
             auctionChangeEl.className = 'stat-value ' + getChangeClass(change);
         } else {
-            auctionChangeEl.textContent = hasAuctionData ? '需昨日对比数据' : '未采集竞价数据';
+            auctionChangeEl.textContent = hasPrevData ? '对比数据为0' : '加载昨日数据中...';
             auctionChangeEl.className = 'stat-value';
         }
     }
@@ -705,7 +696,7 @@ async function queryByDate(dateStr) {
             state.data = (snapshotData.sectors || []).map((item, idx) => ({
                 ...item,
                 _index: idx + 1,
-                _auctionAmount: snapshotData.is_auction_data !== false ? (item.f6 || 0) : null,
+                _auctionAmount: parseFloat(item.f6) || 0,
                 _prevAuctionAmount: null,
                 _auctionChange: null,
                 _auctionChangeRate: null,
@@ -736,7 +727,7 @@ async function queryByDate(dateStr) {
         state.data = (data.sectors || []).map((item, idx) => ({
             ...item,
             _index: idx + 1,
-            _auctionAmount: null,   // K线数据无竞价额
+            _auctionAmount: parseFloat(item.f6) || 0,
             _prevAuctionAmount: null,
             _auctionChange: null,
             _auctionChangeRate: null,
@@ -828,19 +819,19 @@ async function loadFromServer() {
             return false;
         }
 
-        const now = new Date();
-        const t = now.getHours() * 100 + now.getMinutes();
-        const isAuctionTime = (t >= 915 && t <= 925);
-
         state.data = data.sectors.map((item, idx) => ({
             ...item,
             _index: idx + 1,
-            _auctionAmount: isAuctionTime ? (item.f6 || 0) : null,
+            _auctionAmount: parseFloat(item.f6) || 0,
             _prevAuctionAmount: null,
             _auctionChange: null,
             _auctionChangeRate: null,
             _constituentCount: _calcConstituentCount(item),
         }));
+
+        // 获取昨日对比数据
+        await fetchYesterdayComparison();
+
         state.lastUpdateTime = new Date();
         updateStats();
         renderTable();
@@ -848,6 +839,48 @@ async function loadFromServer() {
     } catch (err) {
         console.error('[loadFromServer]', err);
         return false;
+    }
+}
+
+// ========== 获取昨日成交额对比数据 ==========
+async function fetchYesterdayComparison() {
+    try {
+        const data = await apiFetch(`/api/yesterday-compare?type=${state.currentType}`);
+        if (!data.success || !data.amounts) {
+            console.warn('[fetchYesterdayComparison] 获取昨日数据失败:', data.message);
+            return;
+        }
+
+        const prevAmounts = data.amounts;
+        const sourceLabel = data.source === 'local_snapshot' ? '本地快照' : data.source === 'kline_cache' ? 'K线缓存' : 'K线实时';
+
+        // 合并昨日数据到当前板块数据
+        state.data = state.data.map(item => {
+            const code = item.f12;
+            const prevAmount = prevAmounts[code] != null ? prevAmounts[code] : null;
+            const curAmount = parseFloat(item._auctionAmount) || 0;
+
+            let change = null;
+            let changeRate = null;
+            if (prevAmount !== null) {
+                change = curAmount - prevAmount;
+                changeRate = prevAmount !== 0 ? (change / prevAmount) * 100 : 0;
+            }
+
+            return {
+                ...item,
+                _prevAuctionAmount: prevAmount,
+                _auctionChange: change,
+                _auctionChangeRate: changeRate,
+                _yesterdaySource: sourceLabel,
+            };
+        });
+
+        // 重新渲染
+        updateStats();
+        renderTable();
+    } catch (err) {
+        console.error('[fetchYesterdayComparison]', err);
     }
 }
 
@@ -883,14 +916,10 @@ async function loadFromEastmoneyDirect() {
     }
 
     if (allItems.length > 0) {
-        const now = new Date();
-        const t = now.getHours() * 100 + now.getMinutes();
-        const isAuctionTime = (t >= 915 && t <= 925);
-
         state.data = allItems.map((item, idx) => ({
             ...item,
             _index: idx + 1,
-            _auctionAmount: isAuctionTime ? (item.f6 || 0) : null,
+            _auctionAmount: parseFloat(item.f6) || 0,
             _prevAuctionAmount: null,
             _auctionChange: null,
             _auctionChangeRate: null,
@@ -899,6 +928,9 @@ async function loadFromEastmoneyDirect() {
         state.lastUpdateTime = new Date();
         updateStats();
         renderTable();
+
+        // 获取昨日对比数据
+        await fetchYesterdayComparison();
     }
 }
 

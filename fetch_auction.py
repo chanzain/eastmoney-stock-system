@@ -105,14 +105,12 @@ def save_snapshot(data, trade_date=None, capture_time=None):
     # 判断是否在竞价时段采集
     now = datetime.now()
     h, m = now.hour, now.minute
-    is_auction_time = (h == 9 and 25 <= m <= 30) or (h == 9 and 15 <= m < 25)
-    # 也可接受 9:25 整点前后各5分钟窗口
+    is_auction_time = (h == 9 and 15 <= m <= 30)
     auction_flag = is_auction_time
 
     if not is_auction_time:
-        print(f"[警告] 当前时间 {capture_time} 不在竞价时段（9:15~9:30），")
-        print("        采集的 f6 字段为全天成交额，非竞价额！")
-        print("        请在 9:15~9:30 之间重新采集以获取正确的竞价额数据。")
+        print(f"[提示] 当前时间 {capture_time} 不在竞价时段（9:15~9:30），")
+        print("        采集的 f6 字段为全天成交额（竞价时段则为竞价额）。")
 
     filename = f"auction_{trade_date}_{capture_time.replace(':', '')}.json"
     filepath = DATA_DIR / filename
@@ -239,10 +237,10 @@ if __name__ == "__main__":
 
     capture_time = args.time or datetime.now().strftime("%H:%M:%S")
 
-    # 检查是否在竞价时段之后
+    # 检查时间提示
     now = datetime.now()
-    if now.hour < 9 or (now.hour == 9 and now.minute < 25):
-        print(f"[警告] 当前时间 {now.strftime('%H:%M:%S')} 早于9:25，竞价尚未结束")
+    if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+        print(f"[提示] 当前时间 {now.strftime('%H:%M:%S')} 早于9:15，竞价尚未开始")
         print("         将继续采集，但数据可能不完整")
 
     # 采集数据

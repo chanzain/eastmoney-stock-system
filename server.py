@@ -267,6 +267,166 @@ def api_constituents():
     })
 
 
+@app.route("/api/yesterday-compare")
+def api_yesterday_compare():
+    """
+    获取昨日板块成交额数据，供前端做今日vs昨日对比
+    参数：
+      type - 板块类型：industry 或 concept
+    逻辑：
+      1. 优先从本地快照获取昨日数据
+      2. 无快照则通过 K线 API 获取昨日板块数据
+    返回：{ code: amount } 的映射
+    """
+    sector_type = request.args.get("type", "industry").strip()
+
+    # 1. 尝试从本地竞价快照获取昨日数据
+    today_str = datetime.now().strftime("%Y%m%d")
+    prev_date = _find_previous_date(today_str)
+
+    if prev_date:
+        prev_file = _find_latest_snapshot(prev_date)
+        if prev_file:
+            try:
+                with open(prev_file, "r", encoding="utf-8") as f:
+                    prev_data = json.load(f)
+
+                # 从快照中提取指定类型的板块成交额
+                amount_map = {}
+                type_data = prev_data.get("data", {}).get(sector_type, {})
+                for sector in type_data.get("sectors", []):
+                    code = sector.get("f12", "")
+                    amount = sector.get("f6")
+                    if code and amount is not None:
+                        amount_map[code] = float(amount)
+
+                return jsonify({
+                    "success": True,
+                    "source": "local_snapshot",
+                    "date": prev_date,
+                    "type": sector_type,
+                    "count": len(amount_map),
+                    "amounts": amount_map,
+                })
+            except Exception as e:
+                print(f"[WARN] 读取昨日快照失败: {e}")
+
+    # 2. 无本地快照，通过K线API获取昨日数据
+    if not prev_date:
+        # 没有快照文件，手动计算前一个工作日
+        from datetime import timedelta
+        dt = datetime.now()
+        for i in range(1, 8):
+            prev = dt - timedelta(days=i)
+            prev_str = prev.strftime("%Y%m%d")
+            # 简单跳过周末
+            if prev.weekday() < 5:
+                prev_date = prev_str
+                break
+
+    if not prev_date:
+        return jsonify({"success": False, "message": "无法确定前一个交易日"})
+
+    # 获取板块列表
+    fs_map = {"industry": "m:90+t:2", "concept": "m:90+t:3"}
+    fs = fs_map.get(sector_type, "m:90+t:2")
+
+    # 检查K线缓存
+    cache_file = HISTORY_DIR / f"{prev_date}_{sector_type}.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            amount_map = {}
+            for sector in cached.get("sectors", []):
+                code = sector.get("f12", "")
+                amount = sector.get("f6")
+                if code and amount is not None:
+                    amount_map[code] = float(amount)
+            return jsonify({
+                "success": True,
+                "source": "kline_cache",
+                "date": prev_date,
+                "type": sector_type,
+                "count": len(amount_map),
+                "amounts": amount_map,
+            })
+        except Exception:
+            pass
+
+    # 无缓存，实时获取昨日K线
+    sector_list = []
+    page = 1
+    while True:
+        params = {
+            "pn": page, "pz": 500, "po": 1, "np": 1,
+            "fltt": 2, "invt": 2, "fid": "f3", "fs": fs,
+            "fields": "f12,f14",
+        }
+        url = f"https://push2.eastmoney.com/api/qt/clist/get?{_urlencode(params)}"
+        try:
+            raw = _em_get(url, timeout=15)
+        except Exception as e:
+            return jsonify({"success": False, "message": f"获取板块列表失败: {e}"})
+        if not raw or not raw.get("data"):
+            break
+        diff = raw["data"].get("diff") or []
+        if not diff:
+            break
+        sector_list.extend(diff)
+        total = raw["data"].get("total", 0)
+        if len(sector_list) >= total:
+            break
+        page += 1
+
+    if not sector_list:
+        return jsonify({"success": False, "message": "未获取到板块列表"})
+
+    # 并发获取K线
+    amount_map = {}
+
+    def _fetch_kline_amount(sector_item):
+        code = sector_item.get("f12", "")
+        secid = f"90.{code}"
+        kline_url = (
+            f"https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+            f"secid={secid}&fields1=f1,f2,f3,f4,f5,f6"
+            f"&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+            f"&klt=101&fqt=1&beg={prev_date}&end={prev_date}"
+        )
+        try:
+            raw = _em_get(kline_url, timeout=20, retries=1)
+            klines = raw.get("data", {}).get("klines", [])
+            if klines:
+                parts = klines[0].split(",")
+                return code, _safe_float(parts[6])  # 成交额
+        except Exception:
+            pass
+        return code, None
+
+    try:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {pool.submit(_fetch_kline_amount, s): s for s in sector_list}
+            for future in as_completed(futures, timeout=120):
+                try:
+                    code, amount = future.result(timeout=20)
+                    if amount is not None:
+                        amount_map[code] = amount
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[WARN] yesterday-compare 部分请求超时: {e}")
+
+    return jsonify({
+        "success": True,
+        "source": "eastmoney_kline",
+        "date": prev_date,
+        "type": sector_type,
+        "count": len(amount_map),
+        "amounts": amount_map,
+    })
+
+
 @app.route("/api/sectors")
 def api_sectors():
     """
