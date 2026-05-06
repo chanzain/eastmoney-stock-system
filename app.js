@@ -1037,12 +1037,24 @@ const constituentState = {
     totalPages: 1,
     total: 0,
     pageSize: 20,
+    allStocks: [],       // 全量成分股数据（排序/搜索用）
+    sortField: 'change_pct',  // 默认按涨跌幅排序
+    sortAsc: false,           // 默认降序（从大到小）
+    searchTerm: '',           // 搜索关键词
 };
 
 async function openConstituentsModal(code, name) {
     constituentState.code = code;
     constituentState.name = name;
     constituentState.currentPage = 1;
+    constituentState.allStocks = [];
+    constituentState.sortField = 'change_pct';
+    constituentState.sortAsc = false;
+    constituentState.searchTerm = '';
+
+    // 清空搜索框
+    const searchInput = document.getElementById('constituentsSearchInput');
+    if (searchInput) searchInput.value = '';
 
     document.getElementById('constituentsTitle').textContent = `${name}（${code}）成分股`;
     document.getElementById('constituentsTotalBadge').textContent = '';
@@ -1051,30 +1063,46 @@ async function openConstituentsModal(code, name) {
     document.getElementById('constituentsError').style.display = 'none';
     document.getElementById('constituentsOverlay').classList.add('show');
 
-    await loadConstituentsPage(1);
+    // 加载全量成分股数据
+    await loadAllConstituents(code);
 }
 
-async function loadConstituentsPage(page) {
-    const { code, pageSize } = constituentState;
+async function loadAllConstituents(code) {
+    const pageSize = 500; // 每次请求500条
+    let allStocks = [];
+    let page = 1;
+    let total = 0;
 
     document.getElementById('constituentsLoading').style.display = 'flex';
     document.getElementById('constituentsContent').style.display = 'none';
     document.getElementById('constituentsError').style.display = 'none';
 
     try {
-        const data = await apiFetch(`/api/constituents?code=${encodeURIComponent(code)}&page=${page}&size=${pageSize}`);
-        if (!data.success) {
-            throw new Error(data.message || '获取成分股数据失败');
+        // 循环分页获取全量数据
+        while (true) {
+            const data = await apiFetch(`/api/constituents?code=${encodeURIComponent(code)}&page=${page}&size=${pageSize}`);
+            if (!data.success) {
+                throw new Error(data.message || '获取成分股数据失败');
+            }
+
+            total = data.total;
+            if (data.stocks && data.stocks.length > 0) {
+                allStocks = allStocks.concat(data.stocks);
+            }
+
+            // 已获取全部数据
+            if (allStocks.length >= total || data.stocks.length < pageSize) break;
+            page++;
         }
 
-        constituentState.currentPage = data.page;
-        constituentState.totalPages = data.total_pages;
-        constituentState.total = data.total;
+        constituentState.allStocks = allStocks;
+        constituentState.total = total;
+        constituentState.currentPage = 1;
 
-        document.getElementById('constituentsTotalBadge').textContent = `共 ${data.total} 只`;
+        document.getElementById('constituentsTotalBadge').textContent = `共 ${total} 只`;
 
-        renderConstituentsTable(data.stocks, data.page, data.size);
-        renderConstituentsPagination(data.total, data.page, data.total_pages);
+        // 应用排序并渲染
+        applyConstituentsSortAndFilter();
 
         document.getElementById('constituentsLoading').style.display = 'none';
         document.getElementById('constituentsContent').style.display = 'block';
@@ -1086,10 +1114,64 @@ async function loadConstituentsPage(page) {
     }
 }
 
+function applyConstituentsSortAndFilter() {
+    let stocks = [...constituentState.allStocks];
+
+    // 搜索过滤
+    if (constituentState.searchTerm) {
+        const term = constituentState.searchTerm.toLowerCase();
+        stocks = stocks.filter(s =>
+            (s.name && s.name.toLowerCase().includes(term)) ||
+            (s.code && s.code.toLowerCase().includes(term))
+        );
+    }
+
+    // 排序
+    const field = constituentState.sortField;
+    const asc = constituentState.sortAsc;
+    stocks.sort((a, b) => {
+        let va = parseFloat(a[field]);
+        let vb = parseFloat(b[field]);
+        if (isNaN(va)) va = -Infinity;
+        if (isNaN(vb)) vb = -Infinity;
+        return asc ? va - vb : vb - va;
+    });
+
+    const pageSize = constituentState.pageSize;
+    const total = stocks.length;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+    const currentPage = Math.min(constituentState.currentPage, totalPages);
+    constituentState.currentPage = currentPage;
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const pageData = stocks.slice(startIdx, startIdx + pageSize);
+
+    renderConstituentsTable(pageData, currentPage, pageSize);
+    renderConstituentsPagination(total, currentPage, totalPages);
+
+    // 更新排序指示
+    const indicator = document.getElementById('constituentsSortIndicator');
+    if (indicator) {
+        const fieldLabels = { change_pct: '涨跌幅', amount: '成交额', price: '最新价', prev_close: '昨收' };
+        const label = fieldLabels[field] || field;
+        indicator.textContent = `按${label} ${asc ? '↑' : '↓'}`;
+    }
+}
+
+function goConstituentsPage(p) {
+    const totalPages = Math.ceil(constituentState.allStocks.length / constituentState.pageSize) || 1;
+    if (p < 1 || p > totalPages) return;
+    constituentState.currentPage = p;
+    applyConstituentsSortAndFilter();
+}
+
 function renderConstituentsTable(stocks, page, pageSize) {
     const tbody = document.getElementById('constituentsTableBody');
     if (!stocks || !stocks.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#999;padding:40px 0;">暂无成分股数据</td></tr>';
+        const msg = constituentState.searchTerm
+            ? `未找到包含"${constituentState.searchTerm}"的股票`
+            : '暂无成分股数据';
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#999;padding:40px 0;">${msg}</td></tr>`;
         return;
     }
 
@@ -1138,11 +1220,6 @@ function renderConstituentsPagination(total, currentPage, totalPages) {
     html += `<span class="c-page-info">共 ${total} 条 / ${totalPages} 页</span>`;
 
     container.innerHTML = html;
-}
-
-function goConstituentsPage(p) {
-    if (p < 1 || p > constituentState.totalPages) return;
-    loadConstituentsPage(p);
 }
 
 function closeConstituentsModal() {
@@ -1344,6 +1421,38 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('constituentsClose')?.addEventListener('click', closeConstituentsModal);
     document.getElementById('constituentsOverlay')?.addEventListener('click', e => {
         if (e.target === e.currentTarget) closeConstituentsModal();
+    });
+
+    // 成分股搜索框
+    document.getElementById('constituentsSearchInput')?.addEventListener('input', e => {
+        constituentState.searchTerm = e.target.value.trim();
+        constituentState.currentPage = 1;
+        applyConstituentsSortAndFilter();
+    });
+
+    // 成分股表头排序点击
+    document.querySelectorAll('[data-c-sort]').forEach(th => {
+        th.addEventListener('click', () => {
+            const field = th.dataset.cSort;
+            if (constituentState.sortField === field) {
+                constituentState.sortAsc = !constituentState.sortAsc;
+            } else {
+                constituentState.sortField = field;
+                constituentState.sortAsc = false;
+            }
+            constituentState.currentPage = 1;
+            applyConstituentsSortAndFilter();
+
+            // 更新排序箭头
+            document.querySelectorAll('[data-c-sort]').forEach(h => {
+                h.classList.remove('sort-active-asc', 'sort-active-desc');
+                const arrow = h.querySelector('.sort-arrow');
+                if (arrow) arrow.textContent = '';
+            });
+            th.classList.add(constituentState.sortAsc ? 'sort-active-asc' : 'sort-active-desc');
+            const arrow = th.querySelector('.sort-arrow');
+            if (arrow) arrow.textContent = constituentState.sortAsc ? '↑' : '↓';
+        });
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeHistory(); closeConstituentsModal(); } });
 

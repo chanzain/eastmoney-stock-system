@@ -220,6 +220,18 @@
                         <span>加载成分股数据...</span>
                     </div>
                     <div id="constituentsContent" style="display:none">
+                        <div class="constituents-toolbar">
+                            <div class="constituents-search-box">
+                                <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                                    <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+                                    <path d="M11 11L15 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                </svg>
+                                <input type="text" id="constituentsSearchInput" placeholder="搜索股票名称或代码...">
+                            </div>
+                            <div class="constituents-sort-info">
+                                <span class="sort-indicator" id="constituentsSortIndicator">按涨跌幅 ↓</span>
+                            </div>
+                        </div>
                         <table class="constituents-table" id="constituentsTable">
                             <thead>
                                 <tr>
@@ -229,7 +241,7 @@
                                     <th style="width:90px">竞价成交额</th>
                                     <th style="width:80px">昨日收盘价</th>
                                     <th style="width:80px">最新价</th>
-                                    <th style="width:90px">涨跌幅</th>
+                                    <th class="sortable-col" data-c-sort="change_pct" style="width:90px;cursor:pointer">涨跌幅 <span class="sort-arrow">↓</span></th>
                                 </tr>
                             </thead>
                             <tbody id="constituentsTableBody"></tbody>
