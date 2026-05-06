@@ -272,7 +272,7 @@ async function loadAuctionData() {
                 state.prevAuctionData = todayData._prev_data;
             }
             updateAuctionInfo(todayData);
-        }        }
+        }
 
         mergeAuctionData();
         return !!todayData.success;
