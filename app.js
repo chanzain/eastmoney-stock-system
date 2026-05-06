@@ -76,13 +76,17 @@ function fmtPct(v) {
 }
 
 function fmtVolume(v) {
-    if (v == null) return '--';
+    if (v == null || v === '' || v === '-') return '--';
+    v = parseFloat(v);
+    if (isNaN(v)) return '--';
     if (Math.abs(v) >= 10000) return (v / 10000).toFixed(2) + '万手';
-    return v + '手';
+    return v.toFixed(0) + '手';
 }
 
 function fmtAmount(v) {
-    if (v == null) return '--';
+    if (v == null || v === '' || v === '-') return '--';
+    v = parseFloat(v);
+    if (isNaN(v)) return '--';
     const abs = Math.abs(v);
     if (abs >= 100000000) return (v / 100000000).toFixed(2) + '亿';
     if (abs >= 10000) return (v / 10000).toFixed(2) + '万';
@@ -90,7 +94,9 @@ function fmtAmount(v) {
 }
 
 function fmtMoney(v) {
-    if (v == null) return '--';
+    if (v == null || v === '' || v === '-') return '--';
+    v = parseFloat(v);
+    if (isNaN(v)) return '--';
     const abs = Math.abs(v);
     let s;
     if (abs >= 100000000) s = (v / 100000000).toFixed(2) + '亿';
@@ -100,7 +106,9 @@ function fmtMoney(v) {
 }
 
 function getChangeClass(v) {
-    if (v == null) return '';
+    if (v == null || v === '' || v === '-') return '';
+    v = parseFloat(v);
+    if (isNaN(v)) return '';
     if (v > 0) return 'up';
     if (v < 0) return 'down';
     return '';
@@ -410,8 +418,10 @@ function applySortAndFilter() {
     const asc = state.sortAsc;
     data.sort((a, b) => {
         let va = a[field], vb = b[field];
-        if (va == null) va = -Infinity;
-        if (vb == null) vb = -Infinity;
+        va = va != null ? parseFloat(va) : -Infinity;
+        vb = vb != null ? parseFloat(vb) : -Infinity;
+        if (isNaN(va)) va = -Infinity;
+        if (isNaN(vb)) vb = -Infinity;
         return asc ? va - vb : vb - va;
     });
 
@@ -423,10 +433,10 @@ function updateStats() {
     const data = state.data;
     if (!data.length) return;
 
-    const up = data.filter(d => d.f3 > 0).length;
-    const down = data.filter(d => d.f3 < 0).length;
-    const avg = data.reduce((s, d) => s + (d.f3 || 0), 0) / data.length;
-    const totalInflow = data.reduce((s, d) => s + (d.f62 || 0), 0);
+    const up = data.filter(d => parseFloat(d.f3) > 0).length;
+    const down = data.filter(d => parseFloat(d.f3) < 0).length;
+    const avg = data.reduce((s, d) => s + (parseFloat(d.f3) || 0), 0) / data.length;
+    const totalInflow = data.reduce((s, d) => s + (parseFloat(d.f62) || 0), 0);
 
     document.getElementById('totalCount').textContent = data.length;
 
@@ -448,8 +458,8 @@ function updateStats() {
 
     const auctionChangeEl = document.getElementById('auctionTotalChange');
     if (auctionChangeEl) {
-        const totalCur = data.reduce((s, d) => s + (d._auctionAmount || 0), 0);
-        const totalPrev = data.reduce((s, d) => s + (d._prevAuctionAmount || 0), 0);
+        const totalCur = data.reduce((s, d) => s + (parseFloat(d._auctionAmount) || 0), 0);
+        const totalPrev = data.reduce((s, d) => s + (parseFloat(d._prevAuctionAmount) || 0), 0);
         const hasAuctionData = data.some(d => d._auctionAmount != null);
         if (hasAuctionData && totalPrev > 0) {
             const change = totalCur - totalPrev;
@@ -493,8 +503,9 @@ function renderTable() {
         // 竞价变化率样式
         let auctionRateTag = '';
         if (item._auctionChangeRate != null) {
-            const auctionRateCls = item._auctionChangeRate >= 0 ? 'auction-change-up' : 'auction-change-down';
-            const rate = item._auctionChangeRate.toFixed(2);
+            const rateVal = parseFloat(item._auctionChangeRate);
+            const auctionRateCls = rateVal >= 0 ? 'auction-change-up' : 'auction-change-down';
+            const rate = isNaN(rateVal) ? '--' : rateVal.toFixed(2);
             auctionRateTag = `<span class="change-rate-tag ${auctionRateCls}">${rate}%</span>`;
         } else {
             auctionRateTag = '<span class="auction-change-none">--</span>';
@@ -504,14 +515,18 @@ function renderTable() {
         let auctionChangeStr = '--';
         let auctionChangeCls = '';
         if (item._auctionChange != null) {
-            auctionChangeStr = fmtAmount(Math.abs(item._auctionChange));
-            if (item._auctionChange > 0) auctionChangeStr = '+' + auctionChangeStr;
-            else if (item._auctionChange < 0) auctionChangeStr = '-' + auctionChangeStr;
-            auctionChangeCls = getChangeClass(item._auctionChange);
+            const changeVal = parseFloat(item._auctionChange);
+            if (!isNaN(changeVal)) {
+                auctionChangeStr = fmtAmount(Math.abs(changeVal));
+                if (changeVal > 0) auctionChangeStr = '+' + auctionChangeStr;
+                else if (changeVal < 0) auctionChangeStr = '-' + auctionChangeStr;
+                auctionChangeCls = getChangeClass(changeVal);
+            }
         }
 
         // 涨跌幅条宽度
-        const barW = Math.min(Math.abs(item.f3 || 0) * 5, 100);
+        const f3Val = parseFloat(item.f3) || 0;
+        const barW = Math.min(Math.abs(f3Val) * 5, 100);
 
         // 成分股数量显示
         const cc = item._constituentCount;
@@ -934,7 +949,7 @@ function openModal(item) {
         ['涨跌额',     FIELD_META.f4.fmt(item.f4),  getChangeClass(item.f4)],
         ['竞价成交额', item._auctionAmount != null ? fmtAmount(item._auctionAmount) : '未采集', item._auctionAmount != null ? getChangeClass(item._auctionAmount) : ''],
         ['昨日竞价额', item._prevAuctionAmount != null ? fmtAmount(item._prevAuctionAmount) : '--', ''],
-        ['竞价变化率', item._auctionChangeRate != null ? item._auctionChangeRate.toFixed(2) + '%' : '--', getChangeClass(item._auctionChangeRate)],
+        ['竞价变化率', item._auctionChangeRate != null ? parseFloat(item._auctionChangeRate).toFixed(2) + '%' : '--', getChangeClass(item._auctionChangeRate)],
         ['主力净流入', item._historyMode ? '--' : FIELD_META.f62.fmt(item.f62), item._historyMode ? '' : getChangeClass(item.f62)],
         ['超大单净额', item._historyMode ? '--' : FIELD_META.f66.fmt(item.f66), item._historyMode ? '' : getChangeClass(item.f66)],
         ['大单净额',   item._historyMode ? '--' : FIELD_META.f72.fmt(item.f72), item._historyMode ? '' : getChangeClass(item.f72)],
